@@ -1,9 +1,9 @@
 draft:
-  model_name: Qwen/Qwen2.5-0.5B-Instruct
+  model_name: Qwen/Qwen3-0.6B
   quantization: 4bit
   max_tokens: 5
 verify:
-  model_name: Qwen/Qwen2.5-3B-Instruct
+  model_name: Qwen/Qwen3-4B-Instruct-2507
   quantization: 4bit
 sampling:
   temperature: 0.7
