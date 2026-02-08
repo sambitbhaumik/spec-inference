@@ -1,3 +1,7 @@
+"""
+Benchmarking utility: compares naive autoregressive generation vs speculative decoding.
+Measures tokens/sec and acceptance rates to validate speedup from speculation.
+"""
 import argparse
 import time
 
@@ -12,6 +16,7 @@ from speculative.stats import SpeculativeStats
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for benchmarking."""
     parser = argparse.ArgumentParser(description="Benchmark speculative decoding")
     parser.add_argument("--config", type=str, required=True, help="Path to model config YAML")
     parser.add_argument("--prompt", type=str, required=True, help="Prompt to generate from")
@@ -21,18 +26,32 @@ def parse_args() -> argparse.Namespace:
 
 
 def naive_generate(model_bundle, sampling, prompt: str, max_tokens: int):
+    """
+    Baseline autoregressive generation: generate one token per forward pass.
+    
+    Args:
+        model_bundle: ModelBundle with model, tokenizer, device
+        sampling: SamplingConfig for temperature/top-k/top-p
+        prompt: Initial text prompt (str)
+        max_tokens: Max new tokens to generate (int)
+        
+    Returns:
+        (decoded_text, num_tokens_generated)
+    """
     tokenizer = model_bundle.tokenizer
     device = model_bundle.device
     encoded = tokenizer(prompt, return_tensors="pt")
     input_ids = encoded["input_ids"].to(device)
 
     with torch.no_grad():
+        # Pre-fill cache with prompt
         outputs = model_bundle.model(input_ids=input_ids, use_cache=True)
         cache = KVCache.from_past_key_values(outputs.past_key_values)
         last_token = input_ids[:, -1:]
         generated = []
 
         for _ in range(max_tokens):
+            # One token per step (standard autoregressive)
             out = model_bundle.model(
                 input_ids=last_token,
                 past_key_values=cache.past_key_values,
@@ -50,23 +69,26 @@ def naive_generate(model_bundle, sampling, prompt: str, max_tokens: int):
 
 
 def main() -> None:
+    """Run benchmark: naive vs speculative generation with timing."""
     args = parse_args()
     config = load_engine_config(args.config)
 
     draft_k = args.draft_k if args.draft_k is not None else (config.draft.max_tokens or 5)
 
+    # Load models
     verify_bundle = load_model_bundle(config.verify)
     draft_bundle = load_model_bundle(config.draft)
 
+    # Benchmark naive (baseline)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
-
     start = time.perf_counter()
     _, naive_tokens = naive_generate(verify_bundle, config.sampling, args.prompt, args.max_tokens)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     naive_time = time.perf_counter() - start
 
+    # Benchmark speculative decoding
     decoder = SpeculativeDecoder(draft_bundle, verify_bundle, config.sampling, draft_k=draft_k)
     stats = SpeculativeStats()
     if torch.cuda.is_available():
@@ -81,6 +103,7 @@ def main() -> None:
         torch.cuda.synchronize()
     spec_time = time.perf_counter() - start
 
+    # Compute throughput: tokens / second
     naive_tps = naive_tokens / max(naive_time, 1e-6)
     spec_tps = spec_stats.total_emitted / max(spec_time, 1e-6)
 
