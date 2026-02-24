@@ -37,7 +37,18 @@ def _seq_len_from_past(past_key_values: PastKeyValues) -> int:
     """Extract sequence length from first layer's key tensor."""
     if not past_key_values:
         return 0
-    key = past_key_values[0][0]
+    
+    # Handle DynamicCache from transformers
+    if hasattr(past_key_values, "get_seq_length"):
+        return past_key_values.get_seq_length()
+        
+    # Handle standard tuple/list of (key, value) pairs
+    try:
+        key = past_key_values[0][0]
+    except (TypeError, IndexError):
+        # Fallback for other structures if necessary
+        return 0
+        
     return key.size(_seq_dim(key))
 
 
@@ -63,7 +74,16 @@ class KVCache:
     @classmethod
     def from_past_key_values(cls, past_key_values: PastKeyValues) -> "KVCache":
         """Construct KVCache from model output past_key_values."""
-        return cls(past_key_values=list(past_key_values), seq_len=_seq_len_from_past(past_key_values))
+        seq_len = _seq_len_from_past(past_key_values)
+        
+        # Convert DynamicCache or other structures to list of tuples for internal storage
+        if hasattr(past_key_values, "to_legacy_cache"):
+            # DynamicCache has to_legacy_cache() which returns List[Tuple[torch.Tensor, torch.Tensor]]
+            past_key_values = past_key_values.to_legacy_cache()
+        elif not isinstance(past_key_values, list):
+            past_key_values = list(past_key_values)
+            
+        return cls(past_key_values=past_key_values, seq_len=seq_len)
 
     def trim(self, seq_len: int) -> "KVCache":
         """
@@ -83,8 +103,12 @@ class KVCache:
 
         trimmed: List[Tuple[torch.Tensor, torch.Tensor]] = []
         for key, value in self.past_key_values:
-            trimmed_key = _trim_tensor(key, seq_len)
-            trimmed_value = _trim_tensor(value, seq_len)
+            if cuda_ops is not None:
+                trimmed_key = cuda_ops.kv_trim(key, seq_len)
+                trimmed_value = cuda_ops.kv_trim(value, seq_len)
+            else:
+                trimmed_key = _trim_tensor(key, seq_len)
+                trimmed_value = _trim_tensor(value, seq_len)
             trimmed.append((trimmed_key, trimmed_value))
 
         return KVCache(past_key_values=trimmed, seq_len=seq_len)
