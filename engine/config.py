@@ -42,6 +42,7 @@ def load_engine_config(path: str) -> EngineConfig:
             temperature: 0.8
             top_k: 40
             top_p: 0.95
+            min_p: 0.05
     
     Args:
         path: Path to YAML config file
