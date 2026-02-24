@@ -1,6 +1,5 @@
 #include <torch/extension.h>
 #include <ATen/ATen.h>
-#include <ATen/Indexing.h>
 
 #include <limits>
 
@@ -41,10 +40,24 @@ torch::Tensor topp_filter(torch::Tensor logits, double p) {
     return logits.masked_fill(mask_scattered, neg_inf);
 }
 
+torch::Tensor minp_filter(torch::Tensor logits, double p) {
+    if (p <= 0.0) {
+        return logits;
+    }
+
+    auto probs = at::softmax(logits, -1);
+    auto max_probs = std::get<0>(probs.max(-1, true));
+    auto threshold = p * max_probs;
+    auto mask = probs < threshold;
+    auto neg_inf = -std::numeric_limits<float>::infinity();
+    return logits.masked_fill(mask, neg_inf);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("temperature_scale", &temperature_scale, "Temperature scaling");
     m.def("topk_filter", &topk_filter, "Top-k filter");
     m.def("topp_filter", &topp_filter, "Top-p filter (2D only)");
+    m.def("minp_filter", &minp_filter, "Min-p filter");
     m.def("kv_update", &kv_update, "KV cache update");
     m.def("kv_trim", &kv_trim, "KV cache trim");
 }

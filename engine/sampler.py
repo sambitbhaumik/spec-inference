@@ -33,6 +33,11 @@ def _apply_min_p(logits: torch.Tensor, min_p: float) -> torch.Tensor:
     if min_p <= 0.0:
         return logits
 
+    # Try CUDA kernel if available
+    if cuda_ops is not None and logits.is_cuda:
+        return cuda_ops.minp_filter(logits, min_p)
+
+    # CPU implementation
     # Compute softmax probabilities
     probs = torch.softmax(logits, dim=-1)
     # Find max probability per batch
