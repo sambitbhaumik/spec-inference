@@ -14,6 +14,7 @@ class SpeculativeStats:
     steps: int = 0            # Number of decode steps (verification rounds)
     last_acceptance: int = 0  # Tokens accepted in last step
     last_proposed: int = 0    # Tokens proposed in last step
+    last_emitted: int = 0     # Tokens emitted in last step
     memory_mb: Dict[str, float] = field(default_factory=dict)  # GPU memory usage
 
     def update(self, proposed: int, accepted: int, emitted: int) -> None:
@@ -30,6 +31,7 @@ class SpeculativeStats:
         self.steps += 1
         self.last_proposed = proposed
         self.last_acceptance = accepted
+        self.last_emitted = emitted
 
     def update_memory(self) -> None:
         """Capture current GPU memory usage in MB."""

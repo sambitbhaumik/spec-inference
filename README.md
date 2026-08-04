@@ -31,7 +31,7 @@ inference-engine/
 ├── cuda_ops/              # Optional CUDA kernels (not included; template structure)
 │   ├── kv_ops.cu
 │   └── sampling_kernel.cu
-└── requirements.txt       # Python dependencies
+└── pyproject.toml         # Project metadata and Python dependencies
 ```
 
 ## Quick Start
@@ -39,11 +39,11 @@ inference-engine/
 ### Installation
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Create the virtual environment and install locked dependencies
+uv sync
 
 # Optional: Build CUDA kernels (if available)
-cd cuda_ops && python setup.py build_ext --inplace
+cd cuda_ops && uv run python setup.py build_ext --inplace
 ```
 
 ### Configuration
@@ -53,7 +53,7 @@ Create `configs/models.yaml`:
 ### Generate Text
 
 ```bash
-python main.py \
+uv run python main.py \
   --config configs/models.yaml \
   --prompt "Explain Speculative Decoding" \
   --max_tokens 200 \
@@ -61,16 +61,16 @@ python main.py \
 ```
 
 **Output**: Live terminal UI showing:
-- **Acceptance Bar**: Visual feedback on draft-verify agreement
-- **Stats Panel**: Steps, acceptance rate, avg tokens/step, speedup, memory usage
-- **Generated Text**: Streaming text output
+- **Draft → Verify → Emit**: The latest speculative window and its accepted prefix
+- **Efficiency Signals**: Overall acceptance, tokens per verification round, and GPU memory
+- **Generated Text**: A quiet, streaming output view
 
 ### Benchmark
 
 Compare naive autoregressive vs speculative decoding:
 
 ```bash
-python benchmark.py \
+uv run python benchmark.py \
   --config configs/models.yaml \
   --prompt "The future of AI is" \
   --max_tokens 200 \
