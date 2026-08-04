@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 
@@ -11,8 +11,10 @@ try:
 except ImportError:  # pragma: no cover
     cuda_ops = None
 
-# Type alias: each layer's (key_tensor, value_tensor) pair
-PastKeyValues = Sequence[Tuple[torch.Tensor, torch.Tensor]]
+# Recent Transformers releases return a Cache/DynamicCache object, while older
+# releases return a tuple/list of tensor pairs. Keep this alias deliberately
+# broad so the model's native representation is preserved.
+PastKeyValues = Any
 
 
 def _seq_dim(tensor: torch.Tensor) -> int:
@@ -35,13 +37,16 @@ def _seq_dim(tensor: torch.Tensor) -> int:
 
 def _seq_len_from_past(past_key_values: PastKeyValues) -> int:
     """Extract sequence length from first layer's key tensor."""
+    if past_key_values is None:
+        return 0
+
+    # Cache/DynamicCache in current Transformers versions.
+    if hasattr(past_key_values, "get_seq_length"):
+        return int(past_key_values.get_seq_length())
+
     if not past_key_values:
         return 0
-    
-    # Handle DynamicCache from transformers
-    if hasattr(past_key_values, "get_seq_length"):
-        return past_key_values.get_seq_length()
-        
+
     # Handle standard tuple/list of (key, value) pairs
     try:
         key = past_key_values[0][0]
@@ -62,8 +67,8 @@ def _trim_tensor(tensor: torch.Tensor, seq_len: int) -> torch.Tensor:
 
 @dataclass(frozen=True)
 class KVCache:
-    """Immutable container for transformer past_key_values and sequence position tracking."""
-    past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
+    """Container for native or legacy past key/values plus sequence length."""
+    past_key_values: Optional[PastKeyValues] = None
     seq_len: int = 0  # Current sequence length in cache
 
     @classmethod
@@ -75,14 +80,14 @@ class KVCache:
     def from_past_key_values(cls, past_key_values: PastKeyValues) -> "KVCache":
         """Construct KVCache from model output past_key_values."""
         seq_len = _seq_len_from_past(past_key_values)
-        
-        # Convert DynamicCache or other structures to list of tuples for internal storage
-        if hasattr(past_key_values, "to_legacy_cache"):
-            # DynamicCache has to_legacy_cache() which returns List[Tuple[torch.Tensor, torch.Tensor]]
-            past_key_values = past_key_values.to_legacy_cache()
-        elif not isinstance(past_key_values, list):
+
+        # Do not convert a native Transformers Cache to a legacy list. Models
+        # such as Qwen3 require the Cache API (notably get_seq_length()).
+        if not hasattr(past_key_values, "get_seq_length") and not isinstance(
+            past_key_values, list
+        ):
             past_key_values = list(past_key_values)
-            
+
         return cls(past_key_values=past_key_values, seq_len=seq_len)
 
     def trim(self, seq_len: int) -> "KVCache":
@@ -100,6 +105,13 @@ class KVCache:
             return self
         if seq_len >= self.seq_len:
             return self
+
+        # Current Transformers cache objects expose crop(). Model forwards
+        # update these caches in place, so cropping the returned cache is the
+        # intended rollback after a rejected speculative suffix.
+        if hasattr(self.past_key_values, "crop"):
+            self.past_key_values.crop(seq_len)
+            return KVCache(past_key_values=self.past_key_values, seq_len=seq_len)
 
         trimmed: List[Tuple[torch.Tensor, torch.Tensor]] = []
         for key, value in self.past_key_values:
